@@ -153,6 +153,8 @@ jobs:
       # 条件签名：有企业证书 → 用企业证书，没配 → ad-hoc
       - name: Sign with enterprise cert
         if: steps.prepare-sign.outputs.enterprise_cert == 'true'
+        env:
+          CERT_NAME: ${{ secrets.ENTERPRISE_CERT_NAME }}
         run: |
           set +e
           set -x
@@ -160,18 +162,8 @@ jobs:
           ENT_PUBLIC="Resources/NFCClone.entitlements.public"
           ENT_FULL="Resources/NFCClone.entitlements"
 
-          # macOS BSD grep，find-identity 输出可能为空 - 加 stderr 看看为啥
-          FIND_OUT=$(security find-identity -v -p codesigning "$RUNNER_TEMP/signing.keychain-db" 2>&1)
-          echo "=== find-identity raw output ==="
-          echo "$FIND_OUT"
-          CERT_NAME=$(echo "$FIND_OUT" | awk -F'"' '/codesigning/{print $2; exit}')
-          if [ -z "$CERT_NAME" ]; then
-            # 最后 fallback：用 SecurityTaskAgent 或直接 -s - codesign 裸签
-            echo "⚠️ 没拿到证书名，尝试 -s - 裸签"
-            CERT_NAME="-"
-          fi
-          echo "=== 签名 identity: [$CERT_NAME] ==="
-          cat "$ENT_PUBLIC"
+          # 直接用 secret 里的证书名 - GitHub masking 只影响日志显示
+          echo "=== 签名 identity (from secret, masked in log) ==="
 
           codesign -f \
             -s "$CERT_NAME" \
