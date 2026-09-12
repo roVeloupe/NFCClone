@@ -60,21 +60,26 @@ jobs:
             security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
             security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-            # 转换 p12 成 macOS security 兼容格式（新版 PBES2/PBKDF2 会让 security import 报 MAC verification failed）
+            # 拆 p12 → PEM cert + PEM key（macOS security 对新版 PBES2 p12 有兼容问题）
             openssl pkcs12 -in build/signing/enterprise.p12 \
               -passin pass:"$ENTERPRISE_P12_PASSWORD" \
-              -out build/signing/enterprise.legacy.p12 \
-              -passout pass:"$ENTERPRISE_P12_PASSWORD" \
-              -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES 2>&1 | tail -3
-            mv build/signing/enterprise.legacy.p12 build/signing/enterprise.p12
-            echo "p12 已转 legacy 格式"
+              -nocerts -nodes -out build/signing/private-key.pem 2>&1 | tail -3
+            openssl pkcs12 -in build/signing/enterprise.p12 \
+              -passin pass:"$ENTERPRISE_P12_PASSWORD" \
+              -nokeys -out build/signing/cert.pem 2>&1 | tail -3
+            echo "cert PEM: $(wc -c < build/signing/cert.pem) bytes, key PEM: $(wc -c < build/signing/private-key.pem) bytes"
 
-            # 导入证书到钥匙串
-            security import build/signing/enterprise.p12 \
-              -P "$ENTERPRISE_P12_PASSWORD" \
-              -A \
+            # 先加 key，再加 cert
+            security import build/signing/private-key.pem \
+              -A -k "$KEYCHAIN_PATH" 2>&1
+            echo "  import key rc=$?"
+            security import build/signing/cert.pem \
+              -A -k "$KEYCHAIN_PATH" 2>&1
+            echo "  import cert rc=$?"
+            security import build/signing/private-key.pem \
+              -A -T /usr/bin/codesign \
               -k "$KEYCHAIN_PATH" 2>&1
-            echo "  import rc=$?"
+            echo "  import key (codesign trust) rc=$?"
 
             # 把钥匙串加入搜索列表
             security list-keychains -s "$KEYCHAIN_PATH"
