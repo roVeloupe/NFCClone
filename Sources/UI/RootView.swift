@@ -15,7 +15,8 @@ struct RootView: View {
             DashboardView().tabItem { Label("状态", systemImage: "gearshape") }.tag(0)
             ReadView().tabItem { Label("读卡", systemImage: "wave.3.right") }.tag(1)
             EmulateView().tabItem { Label("模拟", systemImage: "antenna.radiowaves.left.and.right") }.tag(2)
-            LogView().tabItem { Label("日志", systemImage: "terminal") }.tag(3)
+            DiagnosticsView().tabItem { Label("诊断", systemImage: "stethoscope.circle") }.tag(3)
+            LogView().tabItem { Label("日志", systemImage: "terminal") }.tag(4)
         }
         .tint(.green)
     }
@@ -141,6 +142,106 @@ struct EmulateView: View {
         }
     }
 }
+
+
+// MARK: - Diagnostics
+
+struct DiagnosticsView: View {
+    @EnvironmentObject var state: AppState
+    @State private var report: DiagReport?
+    @State private var isRunning = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 12) {
+                    Button { runDiagnostics() } label: {
+                        HStack {
+                            Image(systemName: isRunning ? "hourglass" : "stethoscope.circle.fill")
+                            Text(isRunning ? "检测中..." : "🔍 跑完整诊断")
+                        }
+                        .font(.title3.bold()).frame(maxWidth: .infinity).padding()
+                        .background(isRunning ? Color.orange : Color.blue, in: RoundedRectangle(cornerRadius: 16))
+                        .foregroundStyle(.white)
+                    }.buttonStyle(.plain).disabled(isRunning)
+
+                    if let r = report {
+                        ReportSummary(report: r)
+                        ForEach(r.items) { DiagRow(item: $0) }
+                        Button { runDummy() } label: {
+                            HStack {
+                                Image(systemName: "antenna.radiowaves.left.and.right")
+                                Text("🧪 Dummy 模拟测试 (无需物理卡)")
+                                Spacer()
+                                Image(systemName: "arrow.right")
+                            }
+                            .padding().background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                        }.buttonStyle(.plain)
+                    } else {
+                        ContentUnavailableView("还没跑过诊断", systemImage: "stethoscope", description: Text("点上面的按钮开始自检"))
+                    }
+                }.padding()
+            }.navigationTitle("诊断")
+        }
+    }
+
+    private func runDiagnostics() {
+        isRunning = true
+        state.appendLog("🔍 Running diagnostics...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = DiagnosticsEngine.shared.runFullDiagnostics()
+            DispatchQueue.main.async {
+                self.report = r
+                self.isRunning = false
+                state.appendLog("✅ Done: \(r.passCount) pass, \(r.warnCount) warn, \(r.failCount) fail")
+            }
+        }
+    }
+
+    private func runDummy() {
+        let (ok, log) = DiagnosticsEngine.shared.runDummyEmulationTest()
+        for l in log { state.appendLog(l) }
+        state.appendLog(ok ? "✅ Dummy emulation SUCCESS" : "❌ Dummy emulation FAILED (沙箱限制)")
+    }
+}
+
+struct ReportSummary: View {
+    let report: DiagReport
+    var body: some View {
+        HStack {
+            StatBox(label: "PASS", value: report.passCount, color: .green)
+            StatBox(label: "WARN", value: report.warnCount, color: .orange)
+            StatBox(label: "FAIL", value: report.failCount, color: .red)
+        }
+    }
+}
+
+struct StatBox: View {
+    let label: String, value: Int, color: Color
+    var body: some View {
+        VStack {
+            Text("\(value)").font(.title2.bold()).foregroundStyle(color)
+            Text(label).font(.caption).foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity).padding().background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+struct DiagRow: View {
+    let item: DiagItem
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(item.status.rawValue).font(.footnote)
+                Text(item.name).font(.headline)
+                Spacer()
+            }
+            Text(item.detail).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
+            if let s = item.suggestion { Text("💡 \(s)").font(.caption).foregroundStyle(.orange) }
+        }.frame(maxWidth: .infinity, alignment: .leading).padding()
+         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
 
 // MARK: - Log
 
