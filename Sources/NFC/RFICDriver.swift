@@ -8,7 +8,7 @@ import Darwin
 
 // ioctl 是 C 变参函数，Swift 不直接支持 — 手动声明
 @_silgen_name("ioctl")
-func _ioctl(_ fd: Int32, _ request: Int32, _ ptr: UnsafeMutableRawPointer?) -> Int32
+func _ioctl(_ fd: Int32, _ request: UInt, _ ptr: UnsafeMutableRawPointer?) -> Int32
 
 @_silgen_name("open")
 func _open(_ path: UnsafePointer<Int8>, _ flags: Int32) -> Int32
@@ -32,13 +32,13 @@ let F_GETFL: Int32 = 3
 let F_SETFL: Int32 = 4
 
 // RFIC ioctl 常量（iOS 内部定义）
-let NFC_IOC_STOP_INITIATOR: Int32 = 0x80044E01
-let NFC_IOC_START_INITIATOR: Int32 = 0x80044E02
-let NFC_IOC_STOP_TARGET: Int32 = 0x80044E03
-let NFC_IOC_START_TARGET: Int32 = 0x80044E04
-let NFC_IOC_SET_UID: Int32 = 0x80084E10
-let NFC_IOC_SET_TARGET_MODE: Int32 = 0x80084E11
-let NFC_IOC_SET_NDEF: Int32 = 0x80104E12
+let NFC_IOC_STOP_INITIATOR: UInt = 0x80044E01
+let NFC_IOC_START_INITIATOR: UInt = 0x80044E02
+let NFC_IOC_STOP_TARGET: UInt = 0x80044E03
+let NFC_IOC_START_TARGET: UInt = 0x80044E04
+let NFC_IOC_SET_UID: UInt = 0x80084E10
+let NFC_IOC_SET_TARGET_MODE: UInt = 0x80084E11
+let NFC_IOC_SET_NDEF: UInt = 0x80104E12
 
 public class RFICDriver {
 
