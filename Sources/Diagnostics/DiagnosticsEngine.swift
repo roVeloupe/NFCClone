@@ -12,6 +12,19 @@ import Darwin
 import CoreNFC
 import UIKit
 
+// IOKit 基础类型手动 typedef（iOS SDK Darwin module 没导出）
+#if arch(arm64)
+typealias mach_port_t = UInt32
+#else
+typealias mach_port_t = UInt32
+#endif
+typealias io_iterator_t = UInt32
+typealias io_object_t = UInt32
+typealias io_service_t = UInt32
+typealias io_registry_entry_t = UInt32
+typealias kern_return_t = Int32
+let KERN_SUCCESS: kern_return_t = 0
+
 // MARK: - IOKit C bridge（iOS 私有 framework）
 // iOS SDK 没有 Swift module，手动声明
 
@@ -33,7 +46,6 @@ func _IOObjectRelease(_ object: io_object_t) -> kern_return_t
 @_silgen_name("IOObjectCopyClass")
 func _IOObjectCopyClass(_ object: io_object_t) -> Unmanaged<CFString>?
 
-private let KERN_SUCCESS: kern_return_t = 0
 
 // MARK: - 类型
 
