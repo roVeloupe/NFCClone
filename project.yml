@@ -5,50 +5,14 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
 
-settings:
-  base:
-    SWIFT_VERSION: "5.9"
-    TARGETED_DEVICE_FAMILY: "1"
-    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-    CODE_SIGN_STYLE: "Manual"
-    DEVELOPMENT_TEAM: ""
-    CODE_SIGN_IDENTITY: ""
-    CODE_SIGNING_REQUIRED: "NO"
-    CODE_SIGNING_ALLOWED: "NO"
-    ENABLE_BITCODE: "NO"
-    GENERATE_INFOPLIST_FILE: "NO"
-
 targets:
   NFCClone:
     type: application
     platform: iOS
-    source: Sources
+    sources:
+      - path: Sources
     info:
       path: Info.plist
-    entitlements:
-      path: NFCClone.entitlements
-      properties:
-        com.apple.private.security.no-sandbox: true
-        com.apple.private.security.no-container: true
-        com.apple.private.security.container-required: false
-        platform-application: true
-        com.apple.developer.nfc.hce: true
-        com.apple.developer.nfc.hce.default-contactless-app: true
-        com.apple.security.automation.apple-events: true
-        com.apple.mobile.MobileHouseArrest: true
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.apple.nfcd
-        PRODUCT_NAME: NFCClone
-        INFOPLIST_FILE: Info.plist
-        CODE_SIGN_ENTITLEMENTS: NFCClone.entitlements
-        TARGETED_DEVICE_FAMILY: "1"
-    dependencies:
-      - sdk: CoreNFC.framework
-        embed: false
-      - sdk: SwiftUI.framework
-        embed: false
-    info:
       properties:
         CFBundleExecutable: NFCClone
         CFBundleIdentifier: com.apple.nfcd
@@ -63,4 +27,20 @@ targets:
           UISceneConfigurations:
             UIWindowSceneSessionRoleApplication:
               - UISceneConfigurationName: Default Configuration
-                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
+    entitlements:
+      path: NFCClone.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.apple.nfcd
+        PRODUCT_NAME: NFCClone
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGN_ENTITLEMENTS: NFCClone.entitlements
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: "NO"
+        ENABLE_BITCODE: "NO"
