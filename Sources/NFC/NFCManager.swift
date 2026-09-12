@@ -82,6 +82,7 @@ public class NFCManager {
 
         // 检查设备
         let sysinfo = utsname()
+        var sysinfo = utsname()
         _ = withUnsafeMutableBytes(of: &sysinfo.machine) { ptr in
             device = String(bytes: ptr, encoding: .utf8)?
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? "unknown"
@@ -301,7 +302,7 @@ public class NFCManager {
                 _ = CardSessionBypass.shared.bypassIsEligible()
             }
             CardSessionBypass.shared.startEmulation { apdu in
-                Data(self.defaultResponse(forCommand: Array(apdu), snapshot: snapshot) ?? [])
+                Data(self.defaultResponse(forCommand: apdu, snapshot: snapshot) ?? [])
             }
             NSLog("[NFCManager] ⚠️ Emulation starting via CardSession (may have latency)")
             return true

@@ -35,6 +35,7 @@ jobs:
       # archive 要求 provisioning profile，我们不需要那个复杂度
       - name: Build (unsigned, for device)
         run: |
+          set -o pipefail
           mkdir -p build
 
           xcodebuild build \
@@ -50,7 +51,7 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             ONLY_ACTIVE_ARCH=YES \
             ENABLE_BITCODE=NO \
-            2>&1 | tee build/build.log
+            2>&1 | tee build/build.log; exit ${PIPESTATUS[0]}
 
       # 找到编译产出的 .app（DerivedData 里路径可能变，通配符匹配）
       - name: Locate .app bundle

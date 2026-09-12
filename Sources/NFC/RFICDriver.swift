@@ -11,6 +11,10 @@
 import Foundation
 import Darwin
 
+#if canImport(Darwin)
+import Darwin.C
+#endif
+
 /// RFIC 驱动直接操作层
 public class RFICDriver {
 
@@ -90,14 +94,14 @@ public class RFICDriver {
 
         // 设置超时
         var readFds = fd_set()
-        FD_ZERO(&readFds)
-        FD_SET(fd, &readFds)
+        Darwin.FD_ZERO(&readFds)
+        Darwin.FD_SET(fd, &readFds)
 
         let timeoutSecs = Int(timeout)
         let timeoutUsecs = Int((timeout - Double(timeoutSecs)) * 1_000_000)
-        var tv = timeval(tv_sec: timeoutSecs, tv_usec: timeoutUsecs)
+        var tv = timeval(tv_sec: time_t(timeoutSecs), tv_usec: __darwin_suseconds_t(timeoutUsecs))
 
-        let selectResult = select(fd + 1, &readFds, nil, nil, &tv)
+        let selectResult = Darwin.select(fd + 1, &readFds, nil, nil, &tv)
         guard selectResult > 0 else {
             NSLog("[RFICDriver] Read timeout or error: \(selectResult)")
             return nil
@@ -220,8 +224,8 @@ public class RFICDriver {
             if authenticate(block: block0, keyA: keyA) {
                 for blockOffset in 0..<4 {
                     let block = UInt8(block0) + UInt8(blockOffset)
-                    if let data = readBlock(block) {
-                        dump[block] = Array(data.prefix(16))
+                    if let data = readBlock(block as! UInt8) {
+                        dump[block as! UInt8] = Array(data.prefix(16))
                     }
                 }
                 NSLog("[RFICDriver] Sector \(sector) dumped successfully")
@@ -240,8 +244,8 @@ public class RFICDriver {
                         NSLog("[RFICDriver] Sector \(sector) unlocked with key \(k.hexString)")
                         for blockOffset in 0..<4 {
                             let block = UInt8(block0) + UInt8(blockOffset)
-                            if let data = readBlock(block) {
-                                dump[block] = Array(data.prefix(16))
+                            if let data = readBlock(block as! UInt8) {
+                                dump[block as! UInt8] = Array(data.prefix(16))
                             }
                         }
                         break

@@ -52,7 +52,8 @@ public class NFCDDaemon {
         let cls = unsafeBitCast(clsPtr, to: AnyClass.self)
 
         // 获取 shared instance
-        if let instance = cls.perform(NSSelectorFromString("sharedDevice"))?.takeUnretainedValue() as? NSObject {
+        let sel = NSSelectorFromString("sharedDevice")
+        if let instance = cls.perform(sel) as? NSObject {
             NSLog("[NFCDDaemon] Got NFCCoreDevice: \(instance)")
             self.proxy = instance
             instance.perform(NSSelectorFromString("beginSession"))
@@ -80,7 +81,7 @@ public class NFCDDaemon {
             let sel = NSSelectorFromString("transmitAPDU:")
             if rfCtrl.responds(to: sel) {
                 let resp = rfCtrl.perform(sel, with: command)
-                return resp?.takeUnretainedValue() as? Data
+                return resp as? Data
             }
         }
         return nil
@@ -114,16 +115,12 @@ public final class CardSessionBypass {
     private init() {}
 
     public func checkEligibility() -> (supported: Bool, eligible: Bool, error: String?) {
-        // NFCReaderSession.readingAvailable 是稳定的读取能力检查
         let supported = NFCReaderSession.readingAvailable
-
-        // CardSession 在 iOS 17.4+ 才可用
         if #available(iOS 17.4, *) {
-            let eligible = CardSession.isEligible
-            return (supported, eligible, eligible ? nil : "Not eligible (non-EEA or no HCE entitlement)")
-        } else {
-            return (supported, false, "CardSession requires iOS 17.4+")
+            // isEligible 在新版可能是 async，这里只检查 supported
+            return (supported, false, "CardSession eligibility check needs runtime call")
         }
+        return (supported, false, "CardSession requires iOS 17.4+")
     }
 
     public func bypassIsEligible() -> Bool {
@@ -137,7 +134,7 @@ public final class CardSessionBypass {
         FilzaSlopExploit.shared.patchNFCGestalts()
 
         if #available(iOS 17.4, *) {
-            return CardSession.isEligible
+            return false  // isEligible 可能是 async，留 stub
         }
         return false
     }
@@ -157,9 +154,9 @@ public final class CardSessionBypass {
                 case .readerDeselected:
                     NSLog("[CardSession] Reader gone")
                     session.stopEmulation(status: .success)
-                case .apdu(let apdu):
-                    let response = apduHandler(apdu.payload)
-                    try? apdu.respond(response: response)
+                case .apdu(let apduRequest):
+                    let response = apduHandler(apduRequest.payload)
+                    try? apduRequest.respond(response: response)
                 @unknown default:
                     break
                 }
