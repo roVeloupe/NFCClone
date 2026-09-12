@@ -138,8 +138,6 @@ jobs:
       # 条件签名：有企业证书 → 用企业证书，没配 → ad-hoc
       - name: Sign with enterprise cert
         if: steps.prepare-sign.outputs.enterprise_cert == 'true'
-        env:
-          CERT_NAME: ${{ steps.prepare-sign.outputs.cert_name }}
         run: |
           set +e
           set -x
@@ -147,7 +145,9 @@ jobs:
           ENT_PUBLIC="Resources/NFCClone.entitlements.public"
           ENT_FULL="Resources/NFCClone.entitlements"
 
-          echo "=== 用企业证书 $CERT_NAME 签名 ==="
+          # 不要用 secrets 里的 cert_name，GitHub masking 会替换成 ***
+          CERT_NAME=$(security find-identity -v -p codesigning "$RUNNER_TEMP/signing.keychain-db" | grep -oP '"[^"]*"' | head -1 | tr -d '"')
+          echo "=== 签名 identity: $CERT_NAME ==="
           cat "$ENT_PUBLIC"
 
           codesign -f \
@@ -164,7 +164,7 @@ jobs:
           fi
           echo "✅ 企业证书签名成功"
 
-          # 签完再把完整 entitlements 塞进 bundle（运行时诊断用）
+          # 签完再把完整 entitlements 塞进 bundle
           cp "$ENT_FULL" "$APP_PATH/NFCClone.entitlements"
 
           codesign --verify --deep "$APP_PATH" || echo "⚠️ verify 有 warnings 可忽略"
