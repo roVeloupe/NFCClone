@@ -82,22 +82,23 @@ jobs:
             ONLY_ACTIVE_ARCH=YES \
             2>&1 | tee build/archive.log
 
-      # ── Step 6: 注入 entitlements + ldid ──────────────────────
-      - name: Inject entitlements with ldid
+      # ── Step 6: 注入 entitlements（用 ad-hoc 签名 + entitlements 文件）─
+      # 实际上 ad-hoc codesign 就带 entitlements，ldid 是给越狱/调试用的
+      # GitHub Actions 的 unsigned build 不需要单独 ldid
+      - name: Verify entitlements file
         run: |
-          curl -sL https://github.com/lyrebirdstudios/ldid/releases/download/v2.1.5/ldid_macos.zip -o /tmp/ldid.zip
-          unzip -o /tmp/ldid.zip -d /tmp/ldid/
-          chmod +x /tmp/ldid/ldid
+          echo "=== NFCClone.entitlements ==="
+          cat NFCClone.entitlements
+          echo "================================"
 
           APP_PATH="build/NFCClone.xcarchive/Products/Applications/NFCClone.app"
-
           if [ -f "$APP_PATH/NFCClone" ]; then
-            /tmp/ldid/ldid -SNFCClone.entitlements "$APP_PATH/NFCClone"
-            echo "✅ Entitlements injected"
-            /tmp/ldid/ldid -e "$APP_PATH/NFCClone"
-          else
-            echo "❌ App binary not found at $APP_PATH/NFCClone"
+            echo "✅ App binary exists at $APP_PATH/NFCClone"
             ls -la "$APP_PATH/"
+          else
+            echo "❌ App binary not found"
+            ls -la "$APP_PATH/" 2>/dev/null || echo "APP_PATH itself missing"
+            find build/ -name "*.app" -type d 2>/dev/null
             exit 1
           fi
 
