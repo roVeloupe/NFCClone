@@ -160,8 +160,16 @@ jobs:
           ENT_PUBLIC="Resources/NFCClone.entitlements.public"
           ENT_FULL="Resources/NFCClone.entitlements"
 
-          # macOS BSD sed/awk，用 -F'"' 精确拿引号里的证书名字
-          CERT_NAME=$(security find-identity -v -p codesigning "$RUNNER_TEMP/signing.keychain-db" | awk -F'"' '/codesigning/{print $2; exit}')
+          # macOS BSD grep，find-identity 输出可能为空 - 加 stderr 看看为啥
+          FIND_OUT=$(security find-identity -v -p codesigning "$RUNNER_TEMP/signing.keychain-db" 2>&1)
+          echo "=== find-identity raw output ==="
+          echo "$FIND_OUT"
+          CERT_NAME=$(echo "$FIND_OUT" | awk -F'"' '/codesigning/{print $2; exit}')
+          if [ -z "$CERT_NAME" ]; then
+            # 最后 fallback：用 SecurityTaskAgent 或直接 -s - codesign 裸签
+            echo "⚠️ 没拿到证书名，尝试 -s - 裸签"
+            CERT_NAME="-"
+          fi
           echo "=== 签名 identity: [$CERT_NAME] ==="
           cat "$ENT_PUBLIC"
 
