@@ -2,62 +2,51 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- ===== 核心权限：干掉沙箱 ===== -->
-    <key>com.apple.private.security.no-sandbox</key>
-    <true/>
-    <key>com.apple.private.security.no-container</key>
-    <true/>
-    <key>com.apple.private.security.container-required</key>
-    <false/>
-    <key>platform-application</key>
-    <true/>
-
-    <!-- ===== NFC 相关 entitlement ===== -->
-    <key>com.apple.developer.nfc.readersession.formats</key>
-    <array>
-        <string>NDEF</string>
-        <string>TAG</string>
-        <string>ISO7816</string>
-        <string>PAYMENT</string>
-        <string>FELICA</string>
-    </array>
-    <key>com.apple.developer.nfc.hce</key>
-    <true/>
-    <key>com.apple.developer.nfc.hce.iso7816.select-identifier-prefixes</key>
-    <array>
-        <string>A000000004</string>
-        <string>325041592E5359532E4444463031</string>
-        <string>A000000003</string>
-        <string>00000000000000</string>
-    </array>
-    <key>com.apple.developer.nfc.hce.default-contactless-app</key>
-    <true/>
-    <key>com.apple.developer.nfc.readersession.iso7816.select-identifiers</key>
-    <array>
-        <string>A000000004</string>
-        <string>325041592E5359532E4444463031</string>
-    </array>
-
-    <!-- ===== HouseArrest 漏洞需要的 entitlement ===== -->
-    <key>com.apple.mobile.MobileHouseArrest</key>
-    <true/>
-
-    <!-- ===== 允许操作其他进程 ===== -->
-    <key>com.apple.private.cs.debugger</key>
-    <true/>
-    <key>dynamic-codesigning</key>
-    <true/>
-    <key>com.apple.private.skip-library-validation</key>
-    <true/>
-
-    <!-- ===== XPC 通信 ===== -->
-    <key>com.apple.security.automation.apple-events</key>
-    <true/>
-
-    <!-- ===== MobileGestalt 读写 ===== -->
-    <key>com.apple.MobileGestalt.Read</key>
-    <true/>
-    <key>com.apple.MobileGestalt.Write</key>
-    <true/>
+	<key>com.apple.MobileGestalt.Read</key>
+	<true/>
+	<key>com.apple.MobileGestalt.Write</key>
+	<true/>
+	<key>com.apple.developer.nfc.hce</key>
+	<true/>
+	<key>com.apple.developer.nfc.hce.default-contactless-app</key>
+	<true/>
+	<key>com.apple.developer.nfc.hce.iso7816.select-identifier-prefixes</key>
+	<array>
+		<string>A000000004</string>
+		<string>325041592E5359532E4444463031</string>
+		<string>A000000003</string>
+		<string>00000000000000</string>
+	</array>
+	<key>com.apple.developer.nfc.readersession.formats</key>
+	<array>
+		<string>NDEF</string>
+		<string>TAG</string>
+		<string>ISO7816</string>
+		<string>PAYMENT</string>
+		<string>FELICA</string>
+	</array>
+	<key>com.apple.developer.nfc.readersession.iso7816.select-identifiers</key>
+	<array>
+		<string>A000000004</string>
+		<string>325041592E5359532E4444463031</string>
+	</array>
+	<key>com.apple.mobile.MobileHouseArrest</key>
+	<true/>
+	<key>com.apple.private.cs.debugger</key>
+	<true/>
+	<key>com.apple.private.security.container-required</key>
+	<false/>
+	<key>com.apple.private.security.no-container</key>
+	<true/>
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+	<key>com.apple.private.skip-library-validation</key>
+	<true/>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+	<key>dynamic-codesigning</key>
+	<true/>
+	<key>platform-application</key>
+	<true/>
 </dict>
 </plist>

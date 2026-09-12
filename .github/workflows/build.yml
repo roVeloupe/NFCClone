@@ -3,109 +3,80 @@ name: Build IPA
 on:
   push:
     branches: [main, master]
-    paths:
-      - "Sources/**"
-      - "Info.plist"
-      - "NFCClone.entitlements"
-      - "project.yml"
-      - ".github/workflows/build.yml"
   workflow_dispatch:
-    inputs:
-      buildConfig:
-        description: Build configuration
-        required: false
-        default: Release
-        type: choice
-        options:
-          - Release
-          - Debug
-      skipLdid:
-        description: Skip ldid injection (just build unsigned)
-        required: false
-        default: false
-        type: boolean
 
 env:
   SCHEME: NFCClone
-  BUNDLE_ID: com.apple.nfcd
-  CONFIGURATION: Release
 
 jobs:
   build-ipa:
     name: Build NFCClone IPA
-    runs-on: macos-15  # macOS Sequoia (Xcode 16) — 最新稳定
+    runs-on: macos-15
 
     steps:
-      # ── Step 1: 检查环境 ──────────────────────────────────────
       - name: Check environment
         run: |
-          echo "=== Environment ==="
           sw_vers
           xcodebuild -version
-          echo "==================="
           ls -la
 
-      # ── Step 2: Checkout ──────────────────────────────────────
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ── Step 3: Install XcodeGen ──────────────────────────────
       - name: Install XcodeGen
-        run: |
-          brew install xcodegen
-          xcodegen version
+        run: brew install xcodegen
 
-      # ── Step 4: 生成 Xcode 项目（repo root = project root）────
       - name: Generate Xcode project
         run: |
           xcodegen generate
-          ls -la NFCClone.xcodeproj/
-          echo "--- Sources ---"
-          ls -la Sources/
+          ls NFCClone.xcodeproj/
+          ls Sources/
 
-      # ── Step 5: Archive（不签名）──────────────────────────────
-      # CODE_SIGNING_ALLOWED=NO 让 xcodebuild 完全跳过签名
-      - name: Archive (unsigned)
+      # 用 xcodebuild build 而不是 archive——更适合 unsigned 构建
+      # archive 要求 provisioning profile，我们不需要那个复杂度
+      - name: Build (unsigned, for device)
         run: |
           mkdir -p build
-          xcodebuild archive \
+
+          xcodebuild build \
             -project NFCClone.xcodeproj \
             -scheme "${{ env.SCHEME }}" \
             -sdk iphoneos \
-            -configuration "${{ env.CONFIGURATION }}" \
-            -archivePath build/NFCClone.xcarchive \
+            -configuration Release \
+            -derivedDataPath build/DerivedData \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
             ONLY_ACTIVE_ARCH=YES \
-            2>&1 | tee build/archive.log
+            ENABLE_BITCODE=NO \
+            2>&1 | tee build/build.log
 
-      # ── Step 6: 注入 entitlements（用 ad-hoc 签名 + entitlements 文件）─
-      # 实际上 ad-hoc codesign 就带 entitlements，ldid 是给越狱/调试用的
-      # GitHub Actions 的 unsigned build 不需要单独 ldid
-      - name: Verify entitlements file
+      # 找到编译产出的 .app（DerivedData 里路径可能变，通配符匹配）
+      - name: Locate .app bundle
         run: |
-          echo "=== NFCClone.entitlements ==="
-          cat NFCClone.entitlements
-          echo "================================"
+          echo "=== Finding .app ==="
+          find build/DerivedData -name "NFCClone.app" -type d 2>/dev/null
+          APP_PATH=$(find build/DerivedData -name "NFCClone.app" -type d 2>/dev/null | head -1)
+          echo "APP_PATH=$APP_PATH"
 
-          APP_PATH="build/NFCClone.xcarchive/Products/Applications/NFCClone.app"
-          if [ -f "$APP_PATH/NFCClone" ]; then
-            echo "✅ App binary exists at $APP_PATH/NFCClone"
-            ls -la "$APP_PATH/"
-          else
-            echo "❌ App binary not found"
-            ls -la "$APP_PATH/" 2>/dev/null || echo "APP_PATH itself missing"
-            find build/ -name "*.app" -type d 2>/dev/null
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ No .app found! Dumping DerivedData..."
+            find build/DerivedData -maxdepth 5 -type d 2>/dev/null | head -50
             exit 1
           fi
 
-      # ── Step 7: ad-hoc 签名（让 IPA 能装上手机）────────────────
-      - name: Ad-hoc code sign
+          echo "$APP_PATH" > build/app_path.txt
+          ls -la "$APP_PATH/"
+
+      # ad-hoc 签名 + 注入 entitlements（让 IPA 能装上手机）
+      - name: Ad-hoc sign with entitlements
         run: |
-          APP_PATH="build/NFCClone.xcarchive/Products/Applications/NFCClone.app"
+          APP_PATH=$(cat build/app_path.txt)
+
+          echo "=== Entitlements content ==="
+          cat NFCClone.entitlements
+          echo "============================"
 
           codesign -f \
             -s - \
@@ -114,28 +85,24 @@ jobs:
             --deep \
             "$APP_PATH"
 
-          echo "✅ Ad-hoc sign done"
-          codesign --verify --deep --strict "$APP_PATH" || echo "Verification warnings (ok for ad-hoc)"
+          echo "✅ Signed"
+          codesign --display --entitlements - "$APP_PATH/NFCClone" 2>&1 || true
+          codesign --verify --deep "$APP_PATH" || echo "Verify had warnings (ok for ad-hoc)"
 
-      # ── Step 8: 打包 IPA ──────────────────────────────────────
       - name: Package IPA
         run: |
-          APP_PATH="build/NFCClone.xcarchive/Products/Applications/NFCClone.app"
+          APP_PATH=$(cat build/app_path.txt)
           IPA_NAME="NFCClone-${GITHUB_SHA::7}-$(date +%Y%m%d).ipa"
 
           rm -rf build/Payload
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
 
-          cd build
-          zip -r "$IPA_NAME" Payload > /dev/null
-          cd ..
-
-          echo "✅ IPA created: build/$IPA_NAME"
+          cd build && zip -r "$IPA_NAME" Payload > /dev/null && cd ..
+          echo "✅ IPA: build/$IPA_NAME ($(du -h build/$IPA_NAME | cut -f1))"
           ls -lh build/*.ipa
 
-      # ── Step 9: 上传 Artifacts ────────────────────────────────
-      - name: Upload IPA to artifacts
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: NFCClone-iOS
@@ -148,48 +115,6 @@ jobs:
         if: always()
         with:
           name: build-logs
-          path: build/archive.log
+          path: build/build.log
           if-no-files-found: ignore
           retention-days: 7
-
-  # ── Release job: 打 tag 时自动发 Release ────────────────────
-  release:
-    name: Create Release on tag
-    runs-on: ubuntu-latest
-    needs: build-ipa
-    if: startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download IPA artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: NFCClone-iOS
-          path: artifacts
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: "NFCClone ${{ github.ref_name }}"
-          body: |
-            ## 🎯 NFCClone ${{ github.ref_name }}
-
-            **iOS NFC 卡复制 + 模拟 IPA — 企业证书签后可用**
-
-            ### 设备要求
-            - iPhone 12/12 Pro/12 Pro Max/12 mini (A14)
-            - iOS 27 beta 1-4（beta 5 已补 FilzaSlop 漏洞）
-            - 企业开发者证书（用于最终签名）
-
-            ### 🔴 重要：IPA 需企业证书重签！
-            本 Release 的 IPA 是 GitHub Actions 编译的 unsigned/ad-hoc 版本。
-            安装前请用企业证书重签：
-            ```
-            codesign -f -s "Your Enterprise Cert" \
-              --entitlements NFCClone.entitlements \
-              NFCClone.app/NFCClone
-            ```
-          files: artifacts/*.ipa
-          generate_release_notes: true
