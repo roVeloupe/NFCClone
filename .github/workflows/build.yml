@@ -60,11 +60,21 @@ jobs:
             security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
             security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+            # 转换 p12 成 macOS security 兼容格式（新版 PBES2/PBKDF2 会让 security import 报 MAC verification failed）
+            openssl pkcs12 -in build/signing/enterprise.p12 \
+              -passin pass:"$ENTERPRISE_P12_PASSWORD" \
+              -out build/signing/enterprise.legacy.p12 \
+              -passout pass:"$ENTERPRISE_P12_PASSWORD" \
+              -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES 2>&1 | tail -3
+            mv build/signing/enterprise.legacy.p12 build/signing/enterprise.p12
+            echo "p12 已转 legacy 格式"
+
             # 导入证书到钥匙串
             security import build/signing/enterprise.p12 \
               -P "$ENTERPRISE_P12_PASSWORD" \
               -A \
-              -k "$KEYCHAIN_PATH"
+              -k "$KEYCHAIN_PATH" 2>&1
+            echo "  import rc=$?"
 
             # 把钥匙串加入搜索列表
             security list-keychains -s "$KEYCHAIN_PATH"
