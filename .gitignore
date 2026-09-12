@@ -1,0 +1,32 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+xcshareddata/xcschemes/
+
+# Build
+build/
+DerivedData/
+*.xcarchive
+
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Code signing
+*.mobileprovision
+*.p12
+*.pem
+*.cer
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# IPA (local build output)
+*.ipa
+!release/
