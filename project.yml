@@ -37,5 +37,3 @@ targets:
         CODE_SIGNING_ALLOWED: "NO"
         GENERATE_INFOPLIST_FILE: "NO"
         ENABLE_BITCODE: "NO"
-        OTHER_LDFLAGS: ["-framework", "IOKit", "-framework", "CoreNFC"]
-        SWIFT_OBJC_INTEROP: YES

@@ -3,7 +3,7 @@
 //  NFCClone
 //
 //  完整诊断引擎 — 不需要物理卡，自检后生成可用性报告
-//  iOS SDK 限制: 无 IOKit module，用 @_silgen_name 桥接
+//  IOKit 用 dlsym 运行时加载，避免链接 iOS 私有 framework
 //
 
 import Foundation
@@ -19,24 +19,62 @@ typealias io_service_t = UInt32
 typealias kern_return_t = Int32
 let KERN_SUCCESS: kern_return_t = 0
 
-// MARK: - IOKit C 函数桥接
-@_silgen_name("IOMainPortDefault")
-func _IOMainPortDefault() -> mach_port_t
+// MARK: - dlsym 桥接（运行时加载 IOKit 私有 framework）
+@_silgen_name("dlopen")
+func _dlopen(_ path: UnsafePointer<Int8>, _ mode: Int32) -> UnsafeMutableRawPointer?
+@_silgen_name("dlsym")
+func _dlsym(_ handle: UnsafeMutableRawPointer?, _ sym: UnsafePointer<Int8>) -> UnsafeMutableRawPointer?
+@_silgen_name("dlclose")
+func _dlclose(_ handle: UnsafeMutableRawPointer?) -> Int32
+let RTLD_DEFAULT = UnsafeMutableRawPointer?(nil)
 
-@_silgen_name("IOServiceMatching")
-func _IOServiceMatching(_ name: UnsafePointer<Int8>) -> UnsafeMutableRawPointer?
+private struct IOKitFuncs {
+    // 函数指针类型
+    typealias IOMainPortDefaultFn = @convention(c) () -> mach_port_t
+    typealias IOServiceMatchingFn = @convention(c) (UnsafePointer<Int8>) -> UnsafeMutableRawPointer?
+    typealias IOServiceGetMatchingServicesFn = @convention(c) (mach_port_t, UnsafeMutableRawPointer?, UnsafeMutablePointer<io_iterator_t>) -> kern_return_t
+    typealias IOIteratorNextFn = @convention(c) (io_iterator_t) -> io_service_t
+    typealias IOObjectReleaseFn = @convention(c) (io_object_t) -> kern_return_t
+    typealias IOObjectCopyClassFn = @convention(c) (io_object_t) -> Unmanaged<CFString>?
 
-@_silgen_name("IOServiceGetMatchingServices")
-func _IOServiceGetMatchingServices(_ masterPort: mach_port_t, _ matchingDict: UnsafeMutableRawPointer?, _ existing: UnsafeMutablePointer<io_iterator_t>) -> kern_return_t
+    let port: mach_port_t
+    let matching: IOServiceMatchingFn
+    let getMatching: IOServiceGetMatchingServicesFn
+    let iterNext: IOIteratorNextFn
+    let objRelease: IOObjectReleaseFn
+    let objCopyClass: IOObjectCopyClassFn
+    let available: Bool
 
-@_silgen_name("IOIteratorNext")
-func _IOIteratorNext(_ iterator: io_iterator_t) -> io_service_t
+    static let shared = IOKitFuncs()
 
-@_silgen_name("IOObjectRelease")
-func _IOObjectRelease(_ object: io_object_t) -> kern_return_t
-
-@_silgen_name("IOObjectCopyClass")
-func _IOObjectCopyClass(_ object: io_object_t) -> Unmanaged<CFString>?
+    private init() {
+        // iOS 上 IOKit 在 IOKit.framework 或 libsystem_kernel 里
+        // 优先 dlopen IOKit.framework，失败则用 RTLD_DEFAULT (main image)
+        let handle = _dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", 2) ??
+                     _dlopen("/System/Library/PrivateFrameworks/IOKit.framework/IOKit", 2)
+        let sym: (String) -> UnsafeMutableRawPointer? = { name in
+            name.withCString { _dlsym(handle, $0) }
+        }
+        let pmd = sym("IOMainPortDefault") ?? RTLD_DEFAULT.flatMap { _dlsym($0, "IOMainPortDefault") }
+        let m = sym("IOServiceMatching")
+        let g = sym("IOServiceGetMatchingServices")
+        let n = sym("IOIteratorNext")
+        let r = sym("IOObjectRelease")
+        let c = sym("IOObjectCopyClass")
+        guard let pmd, let m, let g, let n, let r, let c else {
+            self.port = 0; self.matching = { _ in nil }; self.getMatching = {_,_,_ in 0 }
+            self.iterNext = { _ in 0 }; self.objRelease = { _ in 0 }; self.objCopyClass = { _ in nil }
+            self.available = false; return
+        }
+        self.port = unsafeBitCast(pmd, to: IOMainPortDefaultFn.self)()
+        self.matching = unsafeBitCast(m, to: IOServiceMatchingFn.self)
+        self.getMatching = unsafeBitCast(g, to: IOServiceGetMatchingServicesFn.self)
+        self.iterNext = unsafeBitCast(n, to: IOIteratorNextFn.self)
+        self.objRelease = unsafeBitCast(r, to: IOObjectReleaseFn.self)
+        self.objCopyClass = unsafeBitCast(c, to: IOObjectCopyClassFn.self)
+        self.available = true
+    }
+}
 
 // MARK: - 类型
 
@@ -152,15 +190,18 @@ public class DiagnosticsEngine {
     }
 
     private func checkIOKitRFIC() -> DiagItem {
+        let io = IOKitFuncs.shared
+        if !io.available {
+            return DiagItem(name: "IOKit RFIC 控制器", status: .skip,
+                            detail: "⚠️ dlsym 加载 IOKit 失败\n(可能需要 no-sandbox 或 dyld 权限)",
+                            suggestion: "企业证书签后再试")
+        }
         let names = ["com.apple.NFC.NFCController", "com.apple.NFC",
                      "IOPCINFCController", "IOAppleNFCController", "AppleNFCController"]
         var found: [String] = []
-        let port = _IOMainPortDefault()
-        for n in names {
-            found.append(contentsOf: iokitServices(matching: n, port: port))
-        }
+        for n in names { found.append(contentsOf: iokitServices(io: io, matching: n)) }
         if found.isEmpty {
-            let all = iokitServices(matching: "IOService", port: port)
+            let all = iokitServices(io: io, matching: "IOService")
             for s in all {
                 let l = s.lowercased()
                 if l.contains("nfc") || l.contains("pcic") || l.contains("pn549") { found.append(s) }
@@ -169,28 +210,28 @@ public class DiagnosticsEngine {
         let st: DiagStatus = found.count > 0 ? .pass : .warn
         return DiagItem(name: "IOKit RFIC 控制器", status: st,
                         detail: st == .pass ? "✅ 找到 \(found.count) 个:\n\(found.prefix(6).joined(separator: "\n"))" :
-                                              "⚠️ IOKit 没找到 (尝试 \(names.count)+ 名字)",
+                                              "⚠️ IOKit OK 但没找到 NFC (尝试 \(names.count)+ 名字)",
                         suggestion: st != .pass ? "HouseArrest 逃沙箱后应该能看到" : nil)
     }
 
-    private func iokitServices(matching name: String, port: mach_port_t) -> [String] {
+    private func iokitServices(io: IOKitFuncs, matching name: String) -> [String] {
         var results: [String] = []
         _ = name.withCString { cname -> kern_return_t in
-            guard let match = _IOServiceMatching(cname) else { return KERN_SUCCESS }
+            guard let match = io.matching(cname) else { return KERN_SUCCESS }
             var iter: io_iterator_t = 0
-            let kr = _IOServiceGetMatchingServices(port, match, &iter)
+            let kr = io.getMatching(io.port, match, &iter)
             if kr != KERN_SUCCESS { return kr }
-            var svc = _IOIteratorNext(iter)
+            var svc = io.iterNext(iter)
             while svc != 0 {
-                if let clsCF = _IOObjectCopyClass(svc) {
+                if let clsCF = io.objCopyClass(svc) {
                     results.append(clsCF.takeRetainedValue() as String)
                 } else {
                     results.append("io_service_t(\(svc))")
                 }
-                _IOObjectRelease(svc)
-                svc = _IOIteratorNext(iter)
+                io.objRelease(svc)
+                svc = io.iterNext(iter)
             }
-            _IOObjectRelease(iter)
+            io.objRelease(iter)
             return KERN_SUCCESS
         }
         return results
