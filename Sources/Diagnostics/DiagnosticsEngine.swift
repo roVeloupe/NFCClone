@@ -11,15 +11,10 @@ import Darwin
 import CoreNFC
 import UIKit
 
-// MARK: - IOKit 类型手动 typedef
-typealias mach_port_t = UInt32
-typealias io_iterator_t = UInt32
-typealias io_object_t = UInt32
-typealias io_service_t = UInt32
-typealias kern_return_t = Int32
-let KERN_SUCCESS: kern_return_t = 0
-
 // MARK: - dlsym 桥接（运行时加载 IOKit 私有 framework）
+// 注意：不在这里 typealias mach_port_t / kern_return_t，
+// 它们已被 import Darwin 定义，重复声明会编译失败。
+// 全部直接使用 UInt32 / Int32 字面类型。
 @_silgen_name("dlopen")
 func _dlopen(_ path: UnsafePointer<Int8>, _ mode: Int32) -> UnsafeMutableRawPointer?
 @_silgen_name("dlsym")
@@ -29,15 +24,15 @@ func _dlclose(_ handle: UnsafeMutableRawPointer?) -> Int32
 let RTLD_DEFAULT = UnsafeMutableRawPointer?(nil)
 
 private struct IOKitFuncs {
-    // 函数指针类型
-    typealias IOMainPortDefaultFn = @convention(c) () -> mach_port_t
+    // 函数指针类型（机器类型直接写 UInt32/Int32，避免与 Darwin 冲突）
+    typealias IOMainPortDefaultFn = @convention(c) () -> UInt32
     typealias IOServiceMatchingFn = @convention(c) (UnsafePointer<Int8>) -> UnsafeMutableRawPointer?
-    typealias IOServiceGetMatchingServicesFn = @convention(c) (mach_port_t, UnsafeMutableRawPointer?, UnsafeMutablePointer<io_iterator_t>) -> kern_return_t
-    typealias IOIteratorNextFn = @convention(c) (io_iterator_t) -> io_service_t
-    typealias IOObjectReleaseFn = @convention(c) (io_object_t) -> kern_return_t
-    typealias IOObjectCopyClassFn = @convention(c) (io_object_t) -> Unmanaged<CFString>?
+    typealias IOServiceGetMatchingServicesFn = @convention(c) (UInt32, UnsafeMutableRawPointer?, UnsafeMutablePointer<UInt32>) -> Int32
+    typealias IOIteratorNextFn = @convention(c) (UInt32) -> UInt32
+    typealias IOObjectReleaseFn = @convention(c) (UInt32) -> Int32
+    typealias IOObjectCopyClassFn = @convention(c) (UInt32) -> Unmanaged<CFString>?
 
-    let port: mach_port_t
+    let port: UInt32
     let matching: IOServiceMatchingFn
     let getMatching: IOServiceGetMatchingServicesFn
     let iterNext: IOIteratorNextFn
@@ -141,11 +136,20 @@ public class DiagnosticsEngine {
         let machine = withUnsafeBytes(of: &u.machine) { b in
             String(cString: b.baseAddress!.assumingMemoryBound(to: CChar.self))
         }
-        let ok = machine.hasPrefix("iPhone12") || machine.hasPrefix("iPhone13") ||
-                 machine.hasPrefix("iPhone14") || machine.hasPrefix("iPhone15") ||
-                 machine.hasPrefix("iPhone16") || machine.contains("arm64e")
-        let chip = ["iPhone12":"A14","iPhone13":"A15","iPhone14":"A16","iPhone15":"A17","iPhone16":"A18"]
-            .first { machine.hasPrefix($0.key) }?.value ?? "Apple Silicon"
+        let ok = machine.hasPrefix("iPhone11") || machine.hasPrefix("iPhone12") ||
+                 machine.hasPrefix("iPhone13") || machine.hasPrefix("iPhone14") ||
+                 machine.hasPrefix("iPhone15") || machine.hasPrefix("iPhone16") ||
+                 machine.hasPrefix("iPhone17") || machine.contains("arm64e")
+        // Apple 内部命名跳过了 "iPhone12" 前缀 — iPhone 12 系列 = iPhone13,* = A14
+        let chip = [
+            "iPhone11":"A12",   // iPhone XR / XS
+            "iPhone12":"A13",   // iPhone 11 系列
+            "iPhone13":"A14",   // iPhone 12 系列 (iPhone13,1-4)
+            "iPhone14":"A15",   // iPhone 13 系列
+            "iPhone15":"A16",   // iPhone 14 系列
+            "iPhone16":"A17",   // iPhone 15 系列
+            "iPhone17":"A18",   // iPhone 16 系列
+        ].first { machine.hasPrefix($0.key) }?.value ?? "Apple Silicon"
         return DiagItem(name: "Device", status: ok ? .pass : .warn,
                         detail: "\(UIDevice.current.model) — \(machine)\nChip: \(chip)",
                         suggestion: ok ? nil : "A14+ 才支持完整 NFC")
@@ -216,11 +220,11 @@ public class DiagnosticsEngine {
 
     private func iokitServices(io: IOKitFuncs, matching name: String) -> [String] {
         var results: [String] = []
-        _ = name.withCString { cname -> kern_return_t in
-            guard let match = io.matching(cname) else { return KERN_SUCCESS }
-            var iter: io_iterator_t = 0
+        _ = name.withCString { cname -> Int32 in
+            guard let match = io.matching(cname) else { return 0 }
+            var iter: UInt32 = 0
             let kr = io.getMatching(io.port, match, &iter)
-            if kr != KERN_SUCCESS { return kr }
+            if kr != 0 { return kr }
             var svc = io.iterNext(iter)
             while svc != 0 {
                 if let clsCF = io.objCopyClass(svc) {
@@ -232,16 +236,20 @@ public class DiagnosticsEngine {
                 svc = io.iterNext(iter)
             }
             io.objRelease(iter)
-            return KERN_SUCCESS
+            return 0
         }
         return results
     }
 
     private func checkNfcdDaemon(_ fm: FileManager) -> DiagItem {
-        let checks = [
+        // iOS 27+ 可能调整了路径，多给几个候选
+        let checks: [(String, String)] = [
             ("/usr/libexec/nfcd", "nfcd 二进制"),
+            ("/usr/libexec/", "nfcd 所在目录"),
             ("/System/Library/Frameworks/NFC.framework/", "NFC.framework"),
             ("/System/Library/PrivateFrameworks/NFCFramework.framework/", "NFCFramework (私有)"),
+            ("/System/Library/PrivateFrameworks/", "PrivateFrameworks 总目录"),
+            ("/System/Library/Frameworks/", "Frameworks 总目录"),
         ]
         var details: [String] = []
         var ok = 0
@@ -250,10 +258,17 @@ public class DiagnosticsEngine {
             if exists { ok += 1 }
             details.append("\(label): \(exists ? "✅" : "❌")\n  \(p)")
         }
-        let st: DiagStatus = ok == checks.count ? .pass : ok > 0 ? .warn : .fail
+        let sandboxEscaped = fm.fileExists(atPath: "/private/var/containers/Bundle/Application/")
+        let st: DiagStatus
+        if ok == checks.count { st = .pass }
+        else if ok >= 2 { st = .warn }
+        else if sandboxEscaped { st = .warn } // 沙箱逃了但系统文件还找不到 → WARN 而非 FAIL
+        else { st = .fail }
         return DiagItem(name: "nfcd Daemon (XPC)", status: st,
                         detail: details.joined(separator: "\n"),
-                        suggestion: st == .pass ? nil : "nfcd 缺文件 (\(ok)/\(checks.count))")
+                        suggestion: st == .pass ? nil :
+                            sandboxEscaped ? "⚠️ 沙箱已逃但 nfcd 文件不可见 — iOS 27 路径可能变化" :
+                                            "nfcd 缺文件 (\(ok)/\(checks.count)) — 先搞定沙箱逃逸")
     }
 
     private func checkLegacyDeviceNodes(_ fm: FileManager) -> DiagItem {
@@ -285,15 +300,22 @@ public class DiagnosticsEngine {
     }
 
     private func checkFileAccess(_ fm: FileManager) -> DiagItem {
-        let tests = [
+        let tests: [(String, String)] = [
             ("/private/var/containers/Data/System/com.apple.MobileGestalt/", "MobileGestalt"),
             ("/private/var/Keychains/", "Keychain"),
             ("/System/Library/PrivateFrameworks/NFCFramework.framework/", "NFCFramework"),
+            ("/System/Library/PrivateFrameworks/", "PrivateFrameworks 目录"),
             ("/usr/libexec/nfcd", "nfcd"),
+            ("/usr/libexec/", "libexec 目录"),
         ]
         var ok: [String] = []
         for (p, l) in tests { if fm.fileExists(atPath: p) { ok.append(l) } }
-        let st: DiagStatus = ok.count >= 3 ? .pass : ok.count >= 1 ? .warn : .fail
+        let sandboxEscaped = fm.fileExists(atPath: "/private/var/containers/Bundle/Application/")
+        let st: DiagStatus
+        if ok.count >= 4 { st = .pass }
+        else if sandboxEscaped { st = .warn } // 沙箱逃了但系统文件仍受限 → WARN
+        else if ok.count >= 1 { st = .warn }
+        else { st = .fail }
         return DiagItem(name: "关键路径访问", status: st,
                         detail: "✅: \(ok.joined(separator: ", ")) (\(ok.count)/\(tests.count))")
     }
