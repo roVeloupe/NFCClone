@@ -21,6 +21,8 @@ jobs:
           ls -la
 
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -81,8 +83,11 @@ jobs:
           cat "$ENTITLEMENTS"
           echo "===================="
 
+          # 把 entitlements 文件也拷进 .app bundle，让运行时诊断能找到
+          cp "$ENTITLEMENTS" "$APP_PATH/NFCClone.entitlements"
+          echo "📦 Copied entitlements into bundle"
+
           # ad-hoc sign (-s -) = 本机自签
-          # 新版 codesign 不支持 --no-runtime，用 --options 替代
           codesign -f \
             -s - \
             --entitlements "$ENTITLEMENTS" \
