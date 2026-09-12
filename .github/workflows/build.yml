@@ -160,10 +160,9 @@ jobs:
           ENT_PUBLIC="Resources/NFCClone.entitlements.public"
           ENT_FULL="Resources/NFCClone.entitlements"
 
-          # 不要用 secrets 里的 cert_name，GitHub masking 会替换成 ***
-          # macOS 用 BSD grep，没有 -P，用 sed 提取 identity 名字
-          CERT_NAME=$(security find-identity -v -p codesigning "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null | sed -n 's/.*codesigning "//; s/".*//p' | head -1)
-          echo "=== 签名 identity: $CERT_NAME ==="
+          # macOS BSD sed/awk，用 -F'"' 精确拿引号里的证书名字
+          CERT_NAME=$(security find-identity -v -p codesigning "$RUNNER_TEMP/signing.keychain-db" | awk -F'"' '/codesigning/{print $2; exit}')
+          echo "=== 签名 identity: [$CERT_NAME] ==="
           cat "$ENT_PUBLIC"
 
           codesign -f \
