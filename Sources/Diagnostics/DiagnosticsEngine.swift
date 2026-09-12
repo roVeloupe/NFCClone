@@ -42,6 +42,10 @@ func _IOObjectCopyClass(_ object: io_object_t) -> Unmanaged<CFString>?
 func _fork() -> Int32
 
 @_silgen_name("execvp")
+@_silgen_name("strdup")
+func _strdup(_ s: UnsafePointer<Int8>) -> UnsafeMutablePointer<Int8>?
+@_silgen_name("free")
+func _free(_ p: UnsafeMutableRawPointer?) -> Void
 func _execvp(_ path: UnsafePointer<Int8>, _ argv: UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>?) -> Int32
 
 // MARK: - 类型
@@ -245,8 +249,15 @@ public class DiagnosticsEngine {
 
     /// POSIX fork+exec — iOS 没 Process 类
     private func posixRun(_ path: String, args: [String]) -> String? {
-        var cargs = args.map { $0.withCString { UnsafeMutableRawPointer(mutating: $0) } }
-        cargs.append(nil)
+        // 构造 char* argv[]
+        let cpath = strdup(path)
+        defer { free(cpath) }
+        var rawArgs: [UnsafeMutablePointer<Int8>?] = []
+        rawArgs.reserveCapacity(args.count + 1)
+        for a in args { rawArgs.append(strdup(a)) }
+        rawArgs.append(nil)
+        defer { for p in rawArgs { if p != nil { free(p) } } }
+        let cargs = rawArgs
         var pipefd = [Int32](repeating: 0, count: 2)
         if pipe(&pipefd) != 0 { return nil }
         let pid = _fork()
@@ -254,7 +265,7 @@ public class DiagnosticsEngine {
             close(pipefd[0])
             dup2(pipefd[1], 1)
             close(pipefd[1])
-            _ = path.withCString { _execvp($0, &cargs) }
+            _execvp(cpath, cargs)
             _exit(1)
         }
         close(pipefd[1])
