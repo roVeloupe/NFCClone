@@ -21,8 +21,6 @@ jobs:
           ls -la
 
       - uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - name: Install XcodeGen
         run: brew install xcodegen
