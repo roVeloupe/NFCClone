@@ -169,28 +169,51 @@ public class DiagnosticsEngine {
         let entInBundle = entPath != nil && fm.fileExists(atPath: entPath!)
         let mpPath = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision")
         let mpExists = mpPath != nil && fm.fileExists(atPath: mpPath!)
-        return DiagItem(name: "NFC Entitlements",
-                        status: (hasNFCDesc || entInBundle) ? .warn : .fail,
+        let count = [hasNFCDesc, entInBundle, mpExists].filter { $0 }.count
+        let st: DiagStatus = count == 3 ? .pass : count >= 1 ? .warn : .fail
+        return DiagItem(name: "NFC Entitlements", status: st,
                         detail: "Info.plist NFC desc: \(hasNFCDesc ? "✅" : "❌")\n" +
                                 ".entitlements in bundle: \(entInBundle ? "✅" : "❌")\n" +
                                 "embedded.mobileprovision: \(mpExists ? "✅" : "❌")",
-                        suggestion: "用企业证书 + ldid 注入 Resources/NFCClone.entitlements")
+                        suggestion: st == .pass ? nil : "需要企业证书注入 entitlements (\(count)/3)")
     }
 
     private func checkSandbox(_ fm: FileManager) -> DiagItem {
-        let paths = [
-            "/private/var/containers/Bundle/Application/",
-            "/private/var/containers/Data/System/",
-            "/private/var/Keychains/",
-            "/etc/passwd",
+        // 用真正只有 no-sandbox 进程才能 stat 的路径
+        // HouseArrest / container_relpath 只能 list 父目录，
+        // 但不能 stat 具体敏感文件（sandbox allow-list filter）
+        let realNoSandboxPaths = [
+            "/usr/libexec/nfcd",                                        // 具体二进制
+            "/System/Library/Frameworks/NFC.framework/",                // 具体 framework
+            "/System/Library/PrivateFrameworks/NFCFramework.framework/", // 私有 framework
+            "/private/var/containers/Data/System/com.apple.MobileGestalt/",
         ]
         var accessible: [String] = []
-        for p in paths { if fm.fileExists(atPath: p) { accessible.append(p) } }
-        let ok = accessible.count >= 2
-        return DiagItem(name: "Sandbox Escape", status: ok ? .pass : .fail,
-                        detail: ok ? "✅ 沙箱已逃逸 (\(accessible.count)/\(paths.count))" :
-                                    "❌ 沙箱未逃逸 (\(accessible.count)/\(paths.count))",
-                        suggestion: ok ? nil : "需要 no-sandbox entitlement")
+        for p in realNoSandboxPaths { if fm.fileExists(atPath: p) { accessible.append(p) } }
+        let st: DiagStatus
+        if accessible.count >= 2 {
+            st = .pass
+        } else {
+            // HouseArrest 漏洞可能让 bundle container 可见，但这不是真正 no-sandbox
+            let parentPaths = ["/usr/libexec/", "/System/Library/Frameworks/"]
+            let parentsVisible = parentPaths.filter { fm.fileExists(atPath: $0) }.count
+            if parentsVisible >= 2 && accessible.count == 0 {
+                st = .warn  // 只有 HouseArrest container 权限，不是完整 no-sandbox
+            } else {
+                st = .fail
+            }
+        }
+        let detail: String
+        if st == .pass {
+            detail = "✅ 真正 no-sandbox — 能 stat \(accessible.count)/\(realNoSandboxPaths.count) 敏感路径"
+        } else if st == .warn {
+            detail = "⚠️ 只有 HouseArrest 容器权限 — 父目录可见但具体文件 stat 不了\n" +
+                     "敏感路径 stat 结果 (0/\(realNoSandboxPaths.count))"
+        } else {
+            detail = "❌ 沙箱未逃逸 (\(accessible.count)/\(realNoSandboxPaths.count))"
+        }
+        return DiagItem(name: "Sandbox Escape", status: st, detail: detail,
+                        suggestion: st == .pass ? nil : "需要企业证书 no-sandbox entitlement（FilzaSlop 漏洞只给了 HouseArrest 容器映射）")
     }
 
     private func checkIOKitRFIC() -> DiagItem {
