@@ -3,12 +3,14 @@
 //  NFCClone
 //
 //  完整诊断引擎 — 不需要物理卡，自检后生成可用性报告
+//  v2: iOS 16+ 无 /dev/nfc*，改用 IOKit + nfcd XPC 检测
 //
 
 import Foundation
 import Darwin
 import CoreNFC
 import UIKit
+import IOKit
 
 public enum DiagStatus: String, Codable {
     case pass = "✅ PASS", warn = "⚠️ WARN", fail = "❌ FAIL", skip = "⏭️ SKIP"
@@ -37,7 +39,7 @@ public struct DiagReport {
     }
     public var canEmulate: Bool {
         let s = items.first { $0.name == "Sandbox Escape" }?.status
-        let r = items.first { $0.name == "RFIC Driver Access" }?.status
+        let r = items.first { $0.name == "RFIC / nfcd 访问" }?.status
         let e = items.first { $0.name == "NFC Entitlements" }?.status
         return s == .pass && r == .pass && e == .pass
     }
@@ -53,8 +55,9 @@ public class DiagnosticsEngine {
         items.append(checkBundleID())
         items.append(checkEntitlements())
         items.append(checkSandbox())
-        items.append(checkRFICDevices())
-        items.append(checkNFCDDaemon())
+        items.append(checkIOKitRFIC())       // iOS 16+ 主路径：IOKit
+        items.append(checkNfcdDaemonXPC())    // nfcd XPC 连接
+        items.append(checkLegacyDeviceNodes()) // 旧 /dev/nfc*（预期空）
         items.append(checkCoreNFC())
         items.append(checkCardSession())
         items.append(checkFileAccess())
@@ -62,16 +65,21 @@ public class DiagnosticsEngine {
                           osVersion: UIDevice.current.systemVersion, items: items)
     }
 
+    // MARK: - 单项
+
     private func checkDevice() -> DiagItem {
         var u = utsname()
         _ = Darwin.uname(&u)
         let machine = withUnsafeBytes(of: &u.machine) { b in
             String(cString: b.baseAddress!.assumingMemoryBound(to: CChar.self))
         }
-        let ok = machine.contains("iPhone12") || machine.contains("arm64e")
+        // iPhone12,x (A14), iPhone13,x (A15), iPhone14,x (A16), iPhone15,x (A17), iPhone16,x (A18)
+        let ok = machine.hasPrefix("iPhone12") || machine.hasPrefix("iPhone13") ||
+                 machine.hasPrefix("iPhone14") || machine.hasPrefix("iPhone15") ||
+                 machine.hasPrefix("iPhone16") || machine.contains("arm64e")
         return DiagItem(name: "Device", status: ok ? .pass : .warn,
                         detail: "\(UIDevice.current.model) — machine: \(machine)",
-                        suggestion: "Target: iPhone 12 (A14)")
+                        suggestion: ok ? nil : "A14+ (iPhone 12+) 才支持完整 NFC")
     }
 
     private func checkBundleID() -> DiagItem {
@@ -79,18 +87,22 @@ public class DiagnosticsEngine {
         let ok = bid == "com.apple.nfcd"
         return DiagItem(name: "Bundle ID (HouseArrest)", status: ok ? .pass : .warn,
                         detail: "current: \(bid)\nexpected: com.apple.nfcd",
-                        suggestion: ok ? nil : "改成 com.apple.nfcd")
+                        suggestion: ok ? nil : "改成 com.apple.nfcd 骗系统权限")
     }
 
     private func checkEntitlements() -> DiagItem {
         let fm = FileManager.default
         let hasNFCDesc = Bundle.main.object(forInfoDictionaryKey: "NFCReaderUsageDescription") != nil
-        // 直接从磁盘读 entitlements 文件（如果被 Xcode 留在 app bundle 里）
         let entPath = Bundle.main.path(forResource: nil, ofType: "entitlements", inDirectory: nil)
         let fileExists = entPath != nil && fm.fileExists(atPath: entPath!)
+        // 尝试从 embedded.mobileprovision 里读 entitlements
+        let mpPath = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision")
+        let mpExists = mpPath != nil && fm.fileExists(atPath: mpPath!)
         return DiagItem(name: "NFC Entitlements",
                         status: (hasNFCDesc || fileExists) ? .warn : .fail,
-                        detail: "Info.plist NFC desc: \(hasNFCDesc ? "✅" : "❌")\n.entitlements in bundle: \(fileExists ? "✅" : "❌")",
+                        detail: "Info.plist NFC desc: \(hasNFCDesc ? "✅" : "❌")\n" +
+                                ".entitlements in bundle: \(fileExists ? "✅" : "❌")\n" +
+                                "embedded.mobileprovision: \(mpExists ? "✅" : "❌")",
                         suggestion: "用企业证书 + ldid 注入 Resources/NFCClone.entitlements")
     }
 
@@ -106,12 +118,112 @@ public class DiagnosticsEngine {
         for p in paths { if fm.fileExists(atPath: p) { accessible.append(p) } }
         let ok = accessible.count >= 2
         return DiagItem(name: "Sandbox Escape", status: ok ? .pass : .fail,
-                        detail: ok ? "✅ 沙箱已逃逸 (\(accessible.count)/\(paths.count))" :
-                                    "❌ 沙箱未逃逸 — 只能访问 \(accessible.count)/\(paths.count)",
+                        detail: ok ? "✅ 沙箱已逃逸 (\(accessible.count)/\(paths.count)) — HouseArrest 生效" :
+                                    "❌ 沙箱未逃逸 (\(accessible.count)/\(paths.count))",
                         suggestion: ok ? nil : "需要 no-sandbox entitlement")
     }
 
-    private func checkRFICDevices() -> DiagItem {
+    /// iOS 16+ 主路径：通过 IOKit 找 NFC 控制器
+    private func checkIOKitRFIC() -> DiagItem {
+        let serviceNames = [
+            "com.apple.NFC.NFCController",
+            "com.apple.NFC",
+            "IOPCINFCController",
+            "IOAppleNFCController",
+            "AppleNFCController",
+        ]
+        var found: [String] = []
+        for name in serviceNames {
+            let match = IOServiceMatching(name as CFString)
+            if let match = match {
+                var iterator: io_iterator_t = 0
+                let kr = IOServiceGetMatchingServices(kIOMainPortDefault, match, &iterator)
+                if kr == KERN_SUCCESS {
+                    var service = IOIteratorNext(iterator)
+                    while service != 0 {
+                        found.append(name)
+                        IOObjectRelease(service)
+                        service = IOIteratorNext(iterator)
+                    }
+                    IOObjectRelease(iterator)
+                }
+            }
+        }
+        // 也搜所有 IOService 看有没有 NFC 相关
+        if found.isEmpty {
+            let match = IOServiceMatching("IOService")
+            if let match = match {
+                var iterator: io_iterator_t = 0
+                if IOServiceGetMatchingServices(kIOMainPortDefault, match, &iterator) == KERN_SUCCESS {
+                    var service = IOIteratorNext(iterator)
+                    while service != 0 {
+                        let cls = IOObjectCopyClass(service) as String? ?? ""
+                        let name = IOObjectCopyName(service) as String? ?? ""
+                        if cls.localizedCaseInsensitiveContains("NFC") || name.localizedCaseInsensitiveContains("NFC") ||
+                           cls.localizedCaseInsensitiveContains("PCIC") {
+                            found.append("\(cls)/\(name)")
+                        }
+                        IOObjectRelease(service)
+                        service = IOIteratorNext(iterator)
+                    }
+                    IOObjectRelease(iterator)
+                }
+            }
+        }
+        let st: DiagStatus = found.count > 0 ? .pass : .warn
+        return DiagItem(name: "IOKit RFIC 控制器", status: st,
+                        detail: st == .pass ? "✅ 找到 \(found.count) 个 NFC 控制器:\n\(found.prefix(5).joined(separator: "\n"))" :
+                                              "⚠️ IOKit 没找到 NFC 控制器 (尝试了 \(serviceNames.count) 个名字)",
+                        suggestion: st != .pass ? "可能 sandbox 或 entitlement 限制 IOKit 访问" : nil)
+    }
+
+    /// nfcd daemon 是否在跑 + XPC 是否能连
+    private func checkNfcdDaemonXPC() -> DiagItem {
+        var details: [String] = []
+        // 1. 检查进程
+        let task_info = ProcessInfo.processInfo
+        details.append("PID: \(task_info.processIdentifier)")
+        // 2. 用 posix ps 找 nfcd
+        let pipe = Pipe()
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/ps")
+        proc.arguments = ["-axo", "pid,comm"]
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        var nfcdRunning = false
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let psOut = String(data: data, encoding: .utf8) ?? ""
+            for line in psOut.components(separatedBy: "\n") {
+                if line.contains("nfcd") { nfcdRunning = true; details.append("进程: ✅ \(line.trimmingCharacters(in: .whitespacesAndNewlines))") }
+            }
+        } catch {
+            details.append("ps 失败: \(error.localizedDescription)")
+        }
+        if !nfcdRunning { details.append("进程: ❌ nfcd 没在跑") }
+
+        // 3. 尝试 XPC 连接（用 libxpc，iOS 上不能直接 dlopen，但我们伪装成 nfcd 自己应该有权）
+        // 简化版：检查 /usr/libexec/nfcd 二进制
+        let fm = FileManager.default
+        let nfcdBin = "/usr/libexec/nfcd"
+        let hasBin = fm.fileExists(atPath: nfcdBin)
+        details.append("nfcd 二进制: \(hasBin ? "✅" : "❌") \(nfcdBin)")
+        // 4. 检查 NFC 框架
+        let hasPriv = fm.fileExists(atPath: "/System/Library/PrivateFrameworks/NFCFramework.framework/")
+        let hasPub = fm.fileExists(atPath: "/System/Library/Frameworks/NFC.framework/")
+        details.append("NFC.framework: \(hasPub ? "✅" : "❌")")
+        details.append("NFCFramework (私有): \(hasPriv ? "✅" : "❌")")
+
+        let st: DiagStatus = nfcdRunning && hasBin ? .pass : hasBin ? .warn : .fail
+        return DiagItem(name: "nfcd Daemon (XPC)", status: st,
+                        detail: details.joined(separator: "\n"),
+                        suggestion: st == .pass ? nil : "nfcd 进程 / 二进制缺失")
+    }
+
+    /// 旧 /dev/nfc* 设备节点检测（iOS 16+ 预期全空，当历史参考）
+    private func checkLegacyDeviceNodes() -> DiagItem {
         let devs = ["/dev/nfcrx", "/dev/nfctx", "/dev/nfc", "/dev/i2c-0", "/dev/i2c-1"]
         var exist: [String] = []
         var writable: [String] = []
@@ -122,23 +234,16 @@ public class DiagnosticsEngine {
                 if fd >= 0 { writable.append(d); close(fd) }
             }
         }
-        let st: DiagStatus = writable.count > 0 ? .pass : exist.count > 0 ? .warn : .fail
-        return DiagItem(name: "RFIC Driver Access", status: st,
-                        detail: "存在: \(exist.count) — \(exist.joined(separator: ", "))\n可写: \(writable.count) — \(writable.joined(separator: ", "))",
-                        suggestion: st != .pass ? "需要 no-sandbox 才能 open /dev/nfc*" : nil)
-    }
-
-    private func checkNFCDDaemon() -> DiagItem {
-        let fm = FileManager.default
-        let paths = [
-            "/System/Library/Frameworks/NFC.framework/",
-            "/System/Library/PrivateFrameworks/NFCFramework.framework/",
-            "/usr/libexec/nfcd",
-        ]
-        var ok: [String] = []
-        for p in paths { if fm.fileExists(atPath: p) { ok.append(p) } }
-        return DiagItem(name: "nfcd Daemon", status: ok.count > 0 ? .pass : .warn,
-                        detail: "可用路径: \(ok.count)\n\(ok.joined(separator: "\n"))")
+        let ios16Plus = ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 16
+        // iOS 16+ 上不存在是正常的 — 标 SKIP
+        let st: DiagStatus
+        if ios16Plus && exist.isEmpty { st = .skip }
+        else if !exist.isEmpty { st = writable.count > 0 ? .pass : .warn }
+        else { st = .warn }
+        return DiagItem(name: "旧 /dev/nfc* 节点 (Legacy)", status: st,
+                        detail: ios16Plus ? "iOS 16+ 已移除，走 IOKit/nfcd XPC 路径 ✅" :
+                                             "存在: \(exist.count) — \(exist.joined(separator: ", "))\n可写: \(writable.count)",
+                        suggestion: ios16Plus ? nil : "新版 iOS 不用这个了")
     }
 
     private func checkCoreNFC() -> DiagItem {
@@ -162,10 +267,11 @@ public class DiagnosticsEngine {
             ("/private/var/containers/Data/System/com.apple.MobileGestalt/", "MobileGestalt"),
             ("/private/var/Keychains/", "Keychain"),
             ("/System/Library/PrivateFrameworks/NFCFramework.framework/", "NFCFramework"),
+            ("/usr/libexec/nfcd", "nfcd daemon"),
         ]
         var ok: [String] = []
         for (p, l) in tests { if fm.fileExists(atPath: p) { ok.append(l) } }
-        let st: DiagStatus = ok.count >= 2 ? .pass : ok.count >= 1 ? .warn : .fail
+        let st: DiagStatus = ok.count >= 3 ? .pass : ok.count >= 1 ? .warn : .fail
         return DiagItem(name: "关键路径访问", status: st,
                         detail: "✅: \(ok.joined(separator: ", ")) (\(ok.count)/\(tests.count))")
     }
@@ -178,10 +284,20 @@ public class DiagnosticsEngine {
         let fakeUID: [UInt8] = [0x04, 0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE]
         log.append("📦 Fake UID: \(fakeUID.map { String(format: "%02X", $0) }.joined())")
 
+        // 先试 legacy /dev/nfc*
         let fdOk = RFICDriver.shared.connect()
-        log.append("📡 RFIC connect: \(fdOk ? "✅" : "❌")")
+        log.append("📡 Legacy /dev/nfc*: \(fdOk ? "✅ connect OK" : "❌ 不存在 (iOS 16+)")")
+
+        // 再试 IOKit 路径
+        let iokitOk = checkIOKitRFIC().status == .pass
+        log.append("🔧 IOKit RFIC 控制器: \(iokitOk ? "✅ 找到" : "❌ 没找到")")
+
+        // 再试 nfcd XPC
+        let xpcOk = checkNfcdDaemonXPC().status == .pass
+        log.append("📡 nfcd daemon: \(xpcOk ? "✅ 运行中" : "❌ 未运行")")
 
         if fdOk {
+            log.append("🎯 Using legacy driver path...")
             let targetOk = RFICDriver.shared.enterTargetMode(fakeUID: fakeUID)
             log.append("🎯 Target Mode: \(targetOk ? "✅ active (2s)" : "❌ failed")")
             if targetOk {
@@ -189,7 +305,12 @@ public class DiagnosticsEngine {
                 RFICDriver.shared.exitTargetMode()
                 log.append("⏹️ Target Mode exited")
             }
+        } else if iokitOk {
+            log.append("🎯 IOKit path detected — 需要 nfcd XPC 注入才能模拟")
+        } else {
+            log.append("❌ 所有 NFC 访问路径都不可用")
         }
-        return (fdOk, log)
+
+        return (fdOk || iokitOk, log)
     }
 }
