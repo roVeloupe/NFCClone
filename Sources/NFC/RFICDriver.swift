@@ -80,12 +80,12 @@ public class RFICDriver {
     public func sendCommand(_ command: [UInt8], timeoutMs: Int = 500) -> [UInt8]? {
         guard fd >= 0 else { return nil }
 
-        let written = command.withUnsafeBytes { _write(fd, $0.baseAddress, $0.count) }
+        let written = command.withUnsafeBytes { _write(fd, $0.baseAddress!, $0.count) }
         guard written == command.count else { return nil }
 
         // 同步读取（短时间等待）
         var response = [UInt8](repeating: 0, count: 512)
-        let n = response.withUnsafeMutableBytes { _read(fd, $0.baseAddress, $0.count) }
+        let n = response.withUnsafeMutableBytes { _read(fd, $0.baseAddress!, $0.count) }
         guard n > 0 else { return nil }
         return Array(response.prefix(n))
     }
