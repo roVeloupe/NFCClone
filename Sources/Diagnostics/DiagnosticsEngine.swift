@@ -8,6 +8,7 @@
 import Foundation
 import Darwin
 import CoreNFC
+import UIKit
 
 public enum DiagStatus: String, Codable {
     case pass = "✅ PASS", warn = "⚠️ WARN", fail = "❌ FAIL", skip = "⏭️ SKIP"
