@@ -141,48 +141,62 @@ jobs:
         env:
           CERT_NAME: ${{ steps.prepare-sign.outputs.cert_name }}
         run: |
+          set +e
+          set -x
           APP_PATH=$(cat build/app_path.txt)
-          ENTITLEMENTS="Resources/NFCClone.entitlements"
+          ENT_PUBLIC="Resources/NFCClone.entitlements.public"
+          ENT_FULL="Resources/NFCClone.entitlements"
 
           echo "=== 用企业证书 $CERT_NAME 签名 ==="
-          echo "=== Entitlements ==="
-          cat "$ENTITLEMENTS"
-
-          # 把 entitlements 拷进 .app bundle（运行时诊断用）
-          cp "$ENTITLEMENTS" "$APP_PATH/NFCClone.entitlements"
+          cat "$ENT_PUBLIC"
 
           codesign -f \
             -s "$CERT_NAME" \
-            --entitlements "$ENTITLEMENTS" \
+            --entitlements "$ENT_PUBLIC" \
             --deep \
             --options runtime \
-            "$APP_PATH"
-
+            "$APP_PATH" 2>&1
+          CS_RC=$?
+          echo "  codesign rc=$CS_RC"
+          if [ $CS_RC -ne 0 ]; then
+            echo "❌ 企业证书签名失败"
+            exit 1
+          fi
           echo "✅ 企业证书签名成功"
-          codesign --display --entitlements - "$APP_PATH/NFCClone" 2>&1
-          codesign --verify --deep "$APP_PATH" && echo "✅ codesign verify 通过" || \
-            echo "⚠️ codesign verify 有 warnings（ad-hoc/企业证书混合正常）"
+
+          # 签完再把完整 entitlements 塞进 bundle（运行时诊断用）
+          cp "$ENT_FULL" "$APP_PATH/NFCClone.entitlements"
+
+          codesign --verify --deep "$APP_PATH" || echo "⚠️ verify 有 warnings 可忽略"
 
       - name: Ad-hoc sign (fallback)
         if: steps.prepare-sign.outputs.enterprise_cert != 'true'
         run: |
+          set +e
+          set -x
           APP_PATH=$(cat build/app_path.txt)
-          ENTITLEMENTS="Resources/NFCClone.entitlements"
+          ENT_PUBLIC="Resources/NFCClone.entitlements.public"
+          ENT_FULL="Resources/NFCClone.entitlements"
 
           echo "=== 用 ad-hoc 自签 ==="
-          cat "$ENTITLEMENTS"
-
-          cp "$ENTITLEMENTS" "$APP_PATH/NFCClone.entitlements"
+          cat "$ENT_PUBLIC"
 
           codesign -f \
             -s - \
-            --entitlements "$ENTITLEMENTS" \
+            --entitlements "$ENT_PUBLIC" \
             --deep \
             --options runtime \
-            "$APP_PATH"
-
+            "$APP_PATH" 2>&1
+          CS_RC=$?
+          echo "  codesign rc=$CS_RC"
+          if [ $CS_RC -ne 0 ]; then
+            echo "❌ ad-hoc 签名失败"
+            exit 1
+          fi
           echo "✅ Ad-hoc 签名完成"
-          codesign --display --entitlements - "$APP_PATH/NFCClone" 2>&1 || true
+
+          # 签完再把完整 entitlements 塞进 bundle
+          cp "$ENT_FULL" "$APP_PATH/NFCClone.entitlements"
 
       - name: Package IPA
         run: |
