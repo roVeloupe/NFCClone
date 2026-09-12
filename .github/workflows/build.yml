@@ -40,7 +40,8 @@ jobs:
           ENTERPRISE_CERT_NAME: ${{ secrets.ENTERPRISE_CERT_NAME }}
           ENTERPRISE_MOBILEPROVISION_BASE64: ${{ secrets.ENTERPRISE_MOBILEPROVISION_BASE64 }}
         run: |
-          set -e
+          set +e
+          set -x
           mkdir -p build/signing
 
           # 检查有没有企业证书 Secrets
@@ -49,7 +50,7 @@ jobs:
             echo "enterprise_cert=true" >> "$GITHUB_OUTPUT"
 
             # base64 decode 出 .p12
-            echo "$ENTERPRISE_P12_BASE64" | base64 -d > build/signing/enterprise.p12
+            printf '%s' "$ENTERPRISE_P12_BASE64" | base64 --decode > build/signing/enterprise.p12
             ls -la build/signing/enterprise.p12
 
             # 创建临时钥匙串（macOS runner 必须）
@@ -86,7 +87,7 @@ jobs:
 
             # mobileprovision（可选）
             if [ -n "$ENTERPRISE_MOBILEPROVISION_BASE64" ]; then
-              echo "$ENTERPRISE_MOBILEPROVISION_BASE64" | base64 -d > build/signing/embedded.mobileprovision
+              printf '%s' "$ENTERPRISE_MOBILEPROVISION_BASE64" | base64 --decode > build/signing/embedded.mobileprovision
               mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
               cp build/signing/embedded.mobileprovision \
                 "$HOME/Library/MobileDevice/Provisioning Profiles/"
