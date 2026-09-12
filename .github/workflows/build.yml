@@ -73,21 +73,25 @@ jobs:
       - name: Ad-hoc sign with entitlements
         run: |
           APP_PATH=$(cat build/app_path.txt)
+          ENTITLEMENTS="Resources/NFCClone.entitlements"
 
-          echo "=== Entitlements content ==="
-          cat NFCClone.entitlements
-          echo "============================"
+          echo "=== Entitlements ==="
+          wc -l "$ENTITLEMENTS"
+          cat "$ENTITLEMENTS"
+          echo "===================="
 
+          # ad-hoc sign (-s -) = 本机自签
+          # 新版 codesign 不支持 --no-runtime，用 --options 替代
           codesign -f \
             -s - \
-            --entitlements NFCClone.entitlements \
-            --no-runtime \
+            --entitlements "$ENTITLEMENTS" \
             --deep \
+            --options runtime \
             "$APP_PATH"
 
-          echo "✅ Signed"
+          echo "✅ Ad-hoc signed with entitlements"
           codesign --display --entitlements - "$APP_PATH/NFCClone" 2>&1 || true
-          codesign --verify --deep "$APP_PATH" || echo "Verify had warnings (ok for ad-hoc)"
+          codesign --verify --deep "$APP_PATH" || echo "Verify warnings (ok for ad-hoc)"
 
       - name: Package IPA
         run: |

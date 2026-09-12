@@ -12,7 +12,7 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/Build"
-ENTITLEMENTS="$PROJECT_DIR/NFCClone.entitlements"
+ENTITLEMENTS="$PROJECT_DIR/Resources/NFCClone.entitlements"
 INFO_PLIST="$PROJECT_DIR/Info.plist"
 APP_NAME="NFCClone"
 SCHEME="$APP_NAME"
@@ -64,7 +64,7 @@ PYEOF
     echo "  2. Product Name: NFCClone"
     echo "  3. Interface: SwiftUI, Language: Swift"
     echo "  4. 把 Sources/ 目录下所有 .swift 文件拖进项目"
-    echo "  5. 把 NFCClone.entitlements 加入项目 (Copy Bundle Resources)"
+    echo "  5. 把 Resources/NFCClone.entitlements 加入项目 (Copy Bundle Resources)"
     echo "  6. 在 Target → Signing & Capabilities 里设置 entitlements 文件路径"
     echo "  7. Bundle Identifier 设为 com.apple.nfcd"
     echo "  8. Build Settings → Code Signing Identity 设为 Manual"

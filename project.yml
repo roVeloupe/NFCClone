@@ -24,11 +24,6 @@ targets:
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
-          UISceneConfigurations:
-            UIWindowSceneSessionRoleApplication:
-              - UISceneConfigurationName: Default Configuration
-    entitlements:
-      path: NFCClone.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apple.nfcd
@@ -40,7 +35,5 @@ targets:
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGNING_ALLOWED: "NO"
-        CODE_SIGN_ENTITLEMENTS: NFCClone.entitlements
-        INFOPLIST_FILE: Info.plist
         GENERATE_INFOPLIST_FILE: "NO"
         ENABLE_BITCODE: "NO"
