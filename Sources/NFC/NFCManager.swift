@@ -65,7 +65,9 @@ public class NFCManager {
         // 设备信息
         var u = utsname()
         _ = Darwin.uname(&u)
-        let machine = String(cString: &u.machine)
+        let machine = withUnsafeBytes(of: &u.machine) { ptr in
+            String(cString: ptr.baseAddress!.assumingMemoryBound(to: CChar.self))
+        }
         NSLog("[NFCManager] Machine: \(machine)")
 
         let escaped = FilzaSlopExploit.shared.isSandboxEscaped()
