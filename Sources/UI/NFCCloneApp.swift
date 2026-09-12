@@ -123,13 +123,12 @@ final class AppState: ObservableObject {
     }
 
     func killNFCD() {
-        appendLog("🔄 Restarting nfcd...")
-        let task = Process()
-        task.launchPath = "/usr/bin/killall"
-        task.arguments = ["-9", "nfcd"]
-        task.standardOutput = FileHandle.nullDevice
-        try? task.run()
-        appendLog("✅ nfcd killed, will restart automatically")
+        appendLog("🔄 Requesting nfcd restart...")
+        // iOS sandbox 不允许 fork/exec，killall 在 no-sandbox 环境下需要用 sysctl 信号
+        // 企业证书 + no-sandbox 可以用 Darwin.kill()
+        let pid = Darwin.getpid()
+        // 这里只做日志记录，真实杀进程需要找 nfcd 的 pid
+        appendLog("ℹ️ Process pid=\(pid) — nfcd restart requires no-sandbox entitlements")
     }
 
     func runFullExploit() {

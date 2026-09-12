@@ -210,16 +210,16 @@ public class RFICDriver {
 
     /// 批量读整个 MIFARE Classic 1K (16 sectors × 4 blocks = 64 blocks)
     /// - Returns: [blockNumber: [data]]
-    public func dumpAll1K(keyA: [UInt8] = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]) -> [UInt8: [UInt8]] {
+    public func dumpAll1K(keyA: [UInt8] = [0xFF as UInt8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]) -> [UInt8: [UInt8]] {
         var dump: [UInt8: [UInt8]] = [:]
 
         for sector in 0..<16 {
-            let block0 = sector * 4
+            let block0 = UInt8(sector * 4)
 
             // 认证每个 sector
             if authenticate(block: block0, keyA: keyA) {
                 for blockOffset in 0..<4 {
-                    let block = block0 + UInt8(blockOffset)
+                    let block = UInt8(block0) + UInt8(blockOffset)
                     if let data = readBlock(block) {
                         dump[block] = Array(data.prefix(16))
                     }
@@ -228,7 +228,7 @@ public class RFICDriver {
             } else {
                 NSLog("[RFICDriver] Sector \(sector) auth FAILED, trying default keys...")
                 // 尝试常用默认 key
-                let defaultKeys = [
+                let defaultKeys: [[UInt8]] = [
                     [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
                     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
                     [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5],
@@ -239,7 +239,7 @@ public class RFICDriver {
                     if authenticate(block: block0, keyA: k) {
                         NSLog("[RFICDriver] Sector \(sector) unlocked with key \(k.hexString)")
                         for blockOffset in 0..<4 {
-                            let block = block0 + UInt8(blockOffset)
+                            let block = UInt8(block0) + UInt8(blockOffset)
                             if let data = readBlock(block) {
                                 dump[block] = Array(data.prefix(16))
                             }
